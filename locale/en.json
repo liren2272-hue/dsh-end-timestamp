@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "End Timestamp",
+    "description": "Inlines the concrete end date and time (ended at YYYY-MM-DD HH:MM:SS) into DSH's 'done, took …' reply line."
+  }
+}

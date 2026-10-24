@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "结束时间戳",
+    "description": "将具体的结束日期时间（结束于 YYYY-MM-DD HH:MM:SS）内联到 DSH「已完成，用时 …」回复行中。"
+  }
+}

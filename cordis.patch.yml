@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-end-timestamp
+      name: '@local/dsh-end-timestamp'
+      config: {}
