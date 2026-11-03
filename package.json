@@ -1,6 +1,7 @@
 {
   "name": "@local/dsh-end-timestamp",
   "version": "1.0.0",
+  "icon": "./icon.svg",
   "private": true,
   "description": "Append the concrete end timestamp inline into DSH's '已完成，用时 …' reply line.",
   "type": "module",
