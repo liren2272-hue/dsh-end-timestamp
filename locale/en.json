@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "End Timestamp",
-    "description": "Inlines the concrete end date and time (ended at YYYY-MM-DD HH:MM:SS) into DSH's 'done, took …' reply line."
+    "description": "Inlines the concrete end date and time plus the serving model (ended at YYYY-MM-DD HH:MM:SS ｜ provider/model) into DSH's 'done, took …' reply line."
   }
 }
