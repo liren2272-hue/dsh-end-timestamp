@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-end-timestamp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "icon": "./icon.svg",
   "private": true,
-  "description": "Append the concrete end timestamp and the serving model inline into DSH's '已完成，用时 …' reply line.",
+  "description": "Append end timestamp + serving model inline into DSH's reply line for completed, interrupted and failed turns; a host route folds raw session events to recover the model when the host omits tokenUsage.",
   "type": "module",
   "exports": {
     ".": "./index.js",
