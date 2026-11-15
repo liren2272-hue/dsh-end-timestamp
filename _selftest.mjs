@@ -315,6 +315,14 @@ async function main() {
     let stampNode = null;
     let durationNode = null;
 
+    function textOf(node) {
+      if (!node) return '';
+      if (node.nodeType === 3) return node.textContent || '';
+      let out = '';
+      const kids = node.children || [];
+      for (const c of kids) out += textOf(c);
+      return out;
+    }
     function fakeEl(tag) {
       const el = {
         tagName: tag,
@@ -322,14 +330,13 @@ async function main() {
         children: [],
         attrs: {},
         style: { cssText: '' },
-        textContent: '',
         setAttribute(k, v) { el.attrs[k] = v; },
         getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; },
         appendChild(child) {
           child.parentNode = el;
           el.children.push(child);
-          if (child.attrs['data-end-timestamp-inline']) stampNode = child;
-          if (child.attrs['data-end-timestamp-duration']) durationNode = child;
+          if (child.attrs && child.attrs['data-end-timestamp-inline']) stampNode = child;
+          if (child.attrs && child.attrs['data-end-timestamp-duration']) durationNode = child;
           return child;
         },
         insertBefore(child, ref) {
@@ -337,16 +344,16 @@ async function main() {
           const i = el.children.indexOf(ref);
           if (i < 0) el.children.push(child);
           else el.children.splice(i, 0, child);
-          if (child.attrs['data-end-timestamp-inline']) stampNode = child;
-          if (child.attrs['data-end-timestamp-duration']) durationNode = child;
+          if (child.attrs && child.attrs['data-end-timestamp-inline']) stampNode = child;
+          if (child.attrs && child.attrs['data-end-timestamp-duration']) durationNode = child;
           return child;
         },
         removeChild(child) {
           const i = el.children.indexOf(child);
           if (i >= 0) el.children.splice(i, 1);
           child.parentNode = null;
-          if (child.attrs['data-end-timestamp-duration']) durationNode = null;
-          if (child.attrs['data-end-timestamp-inline']) stampNode = null;
+          if (child.attrs && child.attrs['data-end-timestamp-duration']) durationNode = null;
+          if (child.attrs && child.attrs['data-end-timestamp-inline']) stampNode = null;
           return child;
         },
         contains(node) { return el.children.indexOf(node) >= 0; },
@@ -357,6 +364,17 @@ async function main() {
         },
         querySelectorAll() { return []; },
       };
+      Object.defineProperty(el, 'textContent', {
+        configurable: true,
+        get() { return textOf(el); },
+        set(v) {
+          el.children = [];
+          if (v !== '') {
+            const t = { nodeType: 3, textContent: String(v), parentNode: el };
+            el.children.push(t);
+          }
+        },
+      });
       return el;
     }
 
@@ -370,6 +388,7 @@ async function main() {
       querySelector: (sel) => (sel && sel.indexOf('data-turn-process') >= 0 ? mockBtn : null),
       querySelectorAll: () => [],
       createElement: (tag) => fakeEl(tag),
+      createTextNode: (t) => ({ nodeType: 3, textContent: String(t), parentNode: null }),
     };
     globalThis.MutationObserver = class { constructor(cb) { this.cb = cb; } observe() {} disconnect() {} };
     if (fetchImpl === undefined) delete globalThis.fetch;
@@ -401,6 +420,7 @@ async function main() {
           (c.attrs && c.attrs['data-end-timestamp-inline']) ? 'inline'
             : (c.attrs && c.attrs['data-end-timestamp-duration']) ? 'duration' : 'text');
       },
+      getDurationNode() { return durationNode; },
       resetStamp() { stampNode = null; durationNode = null; mockLabel.children = []; },
     };
   }
@@ -571,6 +591,15 @@ async function main() {
     check('G1 error turn duration node = ，用时 1分5秒', !!dur && dur.includes('用时') && dur.includes('1分5秒'), dur);
     check('G1b error turn stamp keeps timestamp (no 用时)', !!text && text.includes('结束于') && !text.includes('用时'), text);
     check('G1c duration node sits BEFORE the stamp', c.getLabelOrder().join(',') === 'duration,inline', c.getLabelOrder());
+    // v1.3.2 typography: the duration node must NOT override font-size (DSH's
+    // .hE4tRW_label is font-size: inherit); numeric segments carry DSH's
+    // durationNumber font (--ds-font-family-code + tabular-nums); units keep
+    // the reply label font.
+    const dn = c.getDurationNode();
+    const nums = ((dn && dn.children) || []).filter((x) => x.nodeType === 1);
+    check('G1d duration node has NO font-size override', !!dn && dn.style.cssText.indexOf('font-size') < 0, dn && dn.style.cssText);
+    check('G1e numeric segments use DSH durationNumber font', nums.length === 2 && nums.every((x) => x.style.cssText.indexOf('--ds-font-family-code') >= 0 && x.style.cssText.indexOf('tabular-nums') >= 0), nums.map((x) => x.style.cssText));
+    check('G1f duration node matches DSH color (no opacity)', !!dn && dn.style.cssText.indexOf('opacity') < 0 && dn.style.cssText.indexOf('--dsw-alias-label-tertiary') >= 0, dn && dn.style.cssText);
 
     // interrupted turn (< 60s) -> seconds only.
     c.resetStamp();

@@ -25,6 +25,11 @@
 // 时常读作 "处理失败，用时 X秒（结束于 ... ｜ model）"，格式完全复刻 DSH 的 formatRunDuration。
 // formatRunDuration (小时/分/秒).
 //
+// WHY v1.3.3: the 用时 node must match DSH exactly -- inherit the turn-process
+// label font-size and take the root --dsw-alias-label-tertiary color with NO
+// opacity. v1.3.2 set opacity:.72, which made the duration look too light;
+// the numeric segments still carry DSH durationNumber (--ds-font-family-code).
+//
 // SAFETY: every new path is strictly additive and fully guarded. If the host
 // endpoint is unavailable, this behaves exactly like v1.1.0 (timestamps only).
 // A fold entry is accepted only when its end time matches this turn's end
@@ -307,29 +312,44 @@ window.__ModuleLoader__.load({
     // Mirrors DSH's compiled formatRunDuration(ms, t) exactly: hours only when
     // present, minutes only when total >= 60, seconds always. Units are the
     // same as DSH's zh locale (小时 / 分 / 秒).
-    function formatDuration(ms) {
-      if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '';
+    //
+    // Returns PARTS so the numeric segments can carry DSH's durationNumber
+    // typography (--ds-font-family-code + tabular-nums) while the unit words
+    // keep the reply label font. DSH applies the code font ONLY to numbers.
+    function formatDurationParts(ms) {
+      if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return [];
       const total = Math.max(0, Math.floor(ms / 1000));
       const hours = Math.floor(total / 3600);
       const minutes = Math.floor(total / 60) % 60;
       const seconds = total % 60;
-      let out = '';
-      if (hours > 0) out += hours + '小时';
-      if (total >= 60) out += minutes + '分';
-      out += seconds + '秒';
-      return out;
+      const parts = [];
+      if (hours > 0) parts.push({ text: String(hours), numeric: true }, { text: '小时', numeric: false });
+      if (total >= 60) parts.push({ text: String(minutes), numeric: true }, { text: '分', numeric: false });
+      parts.push({ text: String(seconds), numeric: true }, { text: '秒', numeric: false });
+      return parts;
+    }
+    function formatDuration(ms) {
+      return formatDurationParts(ms).map((p) => p.text).join('');
     }
 
     // elapsed-duration text for the turns where DSH suppresses it, or null.
     // Placed in the label right after the state word -- the same position as
     // DSH's own "已完成，用时 X秒" -- never inside the timestamp/model stamp.
+    //
+    // Returns { text, parts } so the number segments can use DSH's
+    // durationNumber typography while the unit word keeps the label font.
     function durationTextFor(turn, sessionId) {
       const kind = turnReasonKind(turn);
       const stopped = kind === 'aborted' || kind === 'interrupted';
       if (!stopped && kind !== 'error') return null;
       const ms = turnDurationMs(turn, sessionId);
       if (ms === null) return null;
-      return formatDuration(ms) || null;
+      const parts = formatDurationParts(ms);
+      if (!parts.length) return null;
+      return {
+        text: '，用时 ' + formatDuration(ms),
+        parts: [{ text: '，用时 ', numeric: false }].concat(parts),
+      };
     }
 
     // Timestamp + model stamp only. The duration is a SEPARATE node placed
@@ -367,7 +387,12 @@ window.__ModuleLoader__.load({
         if (!dur) {
           dur = document.createElement('span');
           dur.setAttribute(DURATION_ATTR, 'true');
-          dur.style.cssText = 'opacity:.72;font-size:12px;white-space:nowrap;';
+          // v1.3.3: match DSH exactly. The duration node inherits font-size
+          // (the turn-process label is font-size: inherit) and takes the root
+          // --dsw-alias-label-tertiary color with NO opacity: v1.3.2 used
+          // opacity:.72 and looked too light. The numeric segments below still
+          // carry the durationNumber font (--ds-font-family-code + tabular-nums).
+          dur.style.cssText = 'white-space:nowrap;color:var(--dsw-alias-label-tertiary);';
         }
         // Only reposition the node when it is NOT already in the right slot.
         // insertBefore() on an already-positioned node STILL emits a childList
@@ -378,8 +403,23 @@ window.__ModuleLoader__.load({
           if (label.contains(span)) label.insertBefore(dur, span);
           else label.appendChild(dur);
         }
-        const want = '，用时 ' + duration;
-        if (dur.textContent !== want) dur.textContent = want;
+        // Rebuild the number/unit children only when the value changes, so a
+        // no-op patch() never writes and never triggers the observer.
+        const sig = duration.parts.map((p) => (p.numeric ? 'N' : '') + p.text).join('|');
+        if (dur.getAttribute('data-sig') !== sig) {
+          dur.textContent = '';
+          for (const part of duration.parts) {
+            if (part.numeric) {
+              const num = document.createElement('span');
+              num.style.cssText = 'font-family:var(--ds-font-family-code);font-variant-numeric:tabular-nums;';
+              num.textContent = part.text;
+              dur.appendChild(num);
+            } else {
+              dur.appendChild(document.createTextNode(part.text));
+            }
+          }
+          dur.setAttribute('data-sig', sig);
+        }
       } else if (dur && dur.parentNode) {
         dur.parentNode.removeChild(dur);
       }

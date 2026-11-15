@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-end-timestamp",
-  "version": "1.3.0",
+  "version": "1.3.3",
   "icon": "./icon.svg",
   "private": true,
   "description": "Append end timestamp, elapsed duration (用时) and serving model inline into DSH's reply line for completed, interrupted and failed turns; a host route folds raw session events to recover the model when the host omits tokenUsage, and supplies startTime for the duration.",
