@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "结束时间戳",
-    "description": "将具体的结束日期时间与本次运行模型（结束于 YYYY-MM-DD HH:MM:SS ｜ provider/model）内联到 DSH「已完成，用时 …」回复行中。"
+    "description": "将具体的结束日期时间、本次用时与服务模型内联到 DSH 回复行：时间戳/模型放在行尾（结束于 YYYY-MM-DD HH:MM:SS ｜ provider/model），用时紧跟状态词之后，与「已完成，用时 …」位置一致；已停止、处理失败等被 DSH 隐藏用时的轮次同样显示用时。"
   }
 }

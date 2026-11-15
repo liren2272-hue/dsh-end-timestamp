@@ -75,6 +75,10 @@ export function modelsFromEvent(type, data) {
 // turn/start..turn/end seq window they fall in; ones in a gap are held and
 // attributed to the NEXT turn/start. Leftovers with no next turn are dropped
 // rather than guessed onto a turn (never fabricate a model).
+//
+// v1.3: also records startTime (the turn/start event's time) alongside
+// endTime, so the client can render the elapsed duration ("用时") for turns
+// DSH itself suppresses the duration on (aborted / interrupted / error).
 export function foldTurns(events) {
   const turns = new Map();
   const pending = [];
@@ -84,7 +88,7 @@ export function foldTurns(events) {
     if (typeof n !== 'number' || !Number.isFinite(n)) return null;
     let t = turns.get(n);
     if (!t) {
-      t = { turn: n, endTime: null, kind: null, models: new Set() };
+      t = { turn: n, startTime: null, endTime: null, kind: null, models: new Set() };
       turns.set(n, t);
     }
     return t;
@@ -98,7 +102,10 @@ export function foldTurns(events) {
     if (type === 'turn/start') {
       current = typeof data.turn === 'number' ? data.turn : null;
       const t = ensure(current);
-      if (t) for (const l of pending) t.models.add(l);
+      if (t) {
+        if (typeof ev.time === 'number' && Number.isFinite(ev.time)) t.startTime = ev.time;
+        for (const l of pending) t.models.add(l);
+      }
       pending.length = 0;
       continue;
     }
@@ -129,6 +136,7 @@ export function foldTurns(events) {
   for (const t of turns.values()) {
     result.push({
       turn: t.turn,
+      startTime: t.startTime,
       endTime: t.endTime,
       kind: t.kind,
       models: Array.from(t.models),

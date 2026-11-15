@@ -1,8 +1,8 @@
-// Comprehensive offline selftest for @local/dsh-end-timestamp v1.2.
+// Comprehensive offline selftest for @local/dsh-end-timestamp v1.3.
 //
 // Verifies:
-//  A. foldTurns() against the REAL 2208-event session log (3 turns: error /
-//     interrupted / completed, each with the correct model).
+//  A. foldTurns() against the bundled session fixture (3 turns: error /
+//     interrupted / completed, each with the correct model and startTime).
 //  B. foldTurns() synthetic negative controls (gap attribution, no fabrication,
 //     excluded event types, dedup). These assertions TURN RED on a buggy fold.
 //  C. modelsFromEvent() recognizes exactly the 4 trusted event types.
@@ -14,6 +14,10 @@
 //     store, no tail, turnTail slot only -- NEVER conversation.chat.flow).
 //  F. client fold fallback: endpoint unavailable -> v1.1.0 behavior; available
 //     -> model appears; endTime mismatch / wrong turn -> model NOT applied.
+//  G. v1.3 elapsed duration: stopped (aborted/interrupted) and error turns
+//     render "用时 <时长>" (formatting mirrors DSH's formatRunDuration);
+//     completed turns do NOT add it (DSH already shows it); missing start or
+//     the fold's startTime fallback behave correctly.
 //
 // Usage:
 //   node src/_selftest.mjs                       # staged (src/plugin-*.js)
@@ -27,8 +31,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REAL_JSONL =
-  'D:/DSH Workspace/sessions/2026-11-09_0056_2cb73b/tmp/interrupted-session.jsonl';
+// Self-contained fixture bundled inside the plugin (no dependency on a
+// folder outside the plugin, which could be deleted).
+const REAL_JSONL = join(HERE, 'testdata', 'session-fixture.jsonl');
 
 let failures = 0;
 function check(label, cond, extra) {
@@ -95,6 +100,10 @@ async function main() {
     t3 && t3.models.join(' ').includes('hy4free'), t3 && t3.models);
   check('A8 turn1 endTime is a real timestamp', t1 && typeof t1.endTime === 'number' && t1.endTime > 1e12, t1 && t1.endTime);
   check('A9 turn2 endTime is a real timestamp', t2 && typeof t2.endTime === 'number' && t2.endTime > 1e12, t2 && t2.endTime);
+  check('A10 turn1 startTime recorded', t1 && typeof t1.startTime === 'number' && t1.startTime > 1e12, t1 && t1.startTime);
+  check('A11 startTime < endTime on every turn',
+    !!(t1 && t2 && t3 && t1.startTime < t1.endTime && t2.startTime < t2.endTime && t3.startTime < t3.endTime),
+    { t1: [t1 && t1.startTime, t1 && t1.endTime], t2: [t2 && t2.startTime, t2 && t2.endTime], t3: [t3 && t3.startTime, t3 && t3.endTime] });
 
   // =====================================================================
   // B. foldTurns synthetic negative controls (would go RED on a buggy fold)
@@ -303,19 +312,64 @@ async function main() {
   function loadClient(fetchImpl) {
     const captured = [];
     const fakeWindow = { __ModuleLoader__: { load(spec) { captured.push(spec); } } };
-    let stampSpan = null;
-    const mockLabel = {
-      querySelector: (sel) => (sel && sel.indexOf('data-end-timestamp-inline') >= 0 ? stampSpan : null),
-      appendChild(node) { stampSpan = node; },
-    };
+    let stampNode = null;
+    let durationNode = null;
+
+    function fakeEl(tag) {
+      const el = {
+        tagName: tag,
+        nodeType: 1,
+        children: [],
+        attrs: {},
+        style: { cssText: '' },
+        textContent: '',
+        setAttribute(k, v) { el.attrs[k] = v; },
+        getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; },
+        appendChild(child) {
+          child.parentNode = el;
+          el.children.push(child);
+          if (child.attrs['data-end-timestamp-inline']) stampNode = child;
+          if (child.attrs['data-end-timestamp-duration']) durationNode = child;
+          return child;
+        },
+        insertBefore(child, ref) {
+          child.parentNode = el;
+          const i = el.children.indexOf(ref);
+          if (i < 0) el.children.push(child);
+          else el.children.splice(i, 0, child);
+          if (child.attrs['data-end-timestamp-inline']) stampNode = child;
+          if (child.attrs['data-end-timestamp-duration']) durationNode = child;
+          return child;
+        },
+        removeChild(child) {
+          const i = el.children.indexOf(child);
+          if (i >= 0) el.children.splice(i, 1);
+          child.parentNode = null;
+          if (child.attrs['data-end-timestamp-duration']) durationNode = null;
+          if (child.attrs['data-end-timestamp-inline']) stampNode = null;
+          return child;
+        },
+        contains(node) { return el.children.indexOf(node) >= 0; },
+        querySelector(sel) {
+          const m = /data-end-timestamp-(inline|duration)/.exec(sel);
+          if (!m) return null;
+          return m[1] === 'inline' ? stampNode : durationNode;
+        },
+        querySelectorAll() { return []; },
+      };
+      return el;
+    }
+
+    const mockLabel = fakeEl('span');
     const mockBtn = {
       nodeType: 1,
+      children: [],
       querySelector: (sel) => (sel === ':scope > span' ? mockLabel : null),
     };
     globalThis.document = {
       querySelector: (sel) => (sel && sel.indexOf('data-turn-process') >= 0 ? mockBtn : null),
       querySelectorAll: () => [],
-      createElement: () => ({ setAttribute() {}, style: { cssText: '' }, textContent: '' }),
+      createElement: (tag) => fakeEl(tag),
     };
     globalThis.MutationObserver = class { constructor(cb) { this.cb = cb; } observe() {} disconnect() {} };
     if (fetchImpl === undefined) delete globalThis.fetch;
@@ -340,8 +394,14 @@ async function main() {
       component,
       registeredSlot,
       spec,
-      getStamp() { return stampSpan && stampSpan.textContent; },
-      resetStamp() { stampSpan = null; },
+      getStamp() { return stampNode && stampNode.textContent; },
+      getDuration() { return durationNode && durationNode.textContent; },
+      getLabelOrder() {
+        return mockLabel.children.map((c) =>
+          (c.attrs && c.attrs['data-end-timestamp-inline']) ? 'inline'
+            : (c.attrs && c.attrs['data-end-timestamp-duration']) ? 'duration' : 'text');
+      },
+      resetStamp() { stampNode = null; durationNode = null; mockLabel.children = []; },
     };
   }
 
@@ -490,6 +550,93 @@ async function main() {
     await flush(); await flush(); await flush();
     check('F6 tries both fold paths', paths.length === 2 && paths[0] === H.PATH && paths[1] === H.API_PATH, paths);
     check('F6 fallback path supplies model', !!c.getStamp() && c.getStamp().includes('second/hy4free'), c.getStamp());
+  }
+
+  // -- G. v1.3 elapsed duration on stopped/errored turns ------------------
+  // The duration is rendered in its OWN node inside the label, immediately
+  // before the timestamp/model stamp -- the same slot DSH reserves for the
+  // duration of a "已完成，用时 X秒" reply. The model stamp is never displaced.
+  {
+    const c = loadClient(undefined);
+    const end = T;
+
+    // error turn: duration node carries the text, formatted like DSH (1分5秒).
+    c.resetStamp();
+    c.component({ turn: makeTurn({
+      turn: 60, start: { time: end - 65000 },
+      end: { time: end, data: { reason: { kind: 'error' } } },
+    }) });
+    let dur = c.getDuration();
+    let text = c.getStamp();
+    check('G1 error turn duration node = ，用时 1分5秒', !!dur && dur.includes('用时') && dur.includes('1分5秒'), dur);
+    check('G1b error turn stamp keeps timestamp (no 用时)', !!text && text.includes('结束于') && !text.includes('用时'), text);
+    check('G1c duration node sits BEFORE the stamp', c.getLabelOrder().join(',') === 'duration,inline', c.getLabelOrder());
+
+    // interrupted turn (< 60s) -> seconds only.
+    c.resetStamp();
+    c.component({ turn: makeTurn({
+      turn: 61, start: { time: end - 3000 },
+      end: { time: end, data: { reason: { kind: 'interrupted' } } },
+    }) });
+    dur = c.getDuration();
+    text = c.getStamp();
+    check('G2 interrupted turn duration = ，用时 3秒', !!dur && dur.includes('用时') && dur.includes('3秒'), dur);
+    check('G2b interrupted turn stamp has no 用时', !!text && !text.includes('用时'), text);
+
+    // aborted turn >= 1h -> hours + minutes + seconds.
+    c.resetStamp();
+    c.component({ turn: makeTurn({
+      turn: 62, start: { time: end - 3661000 },
+      end: { time: end, data: { reason: { kind: 'aborted' } } },
+    }) });
+    dur = c.getDuration();
+    check('G3 aborted turn duration = ，用时 1小时1分1秒', !!dur && dur.includes('用时') && dur.includes('1小时1分1秒'), dur);
+
+    // completed turn: DSH already shows the duration, so we must NOT add it.
+    c.resetStamp();
+    c.component({ turn: makeTurn({
+      turn: 63, start: { time: end - 65000 },
+      end: { time: end, data: { reason: { kind: 'completed' } } },
+    }) });
+    dur = c.getDuration();
+    text = c.getStamp();
+    check('G4 completed turn has NO duration node', dur === null, dur);
+    check('G4b completed turn stamp intact', !!text && text.includes('结束于') && !text.includes('用时'), text);
+
+    // no start time -> no duration node, but stamp is intact (no crash).
+    c.resetStamp();
+    c.component({ turn: makeTurn({
+      turn: 64, end: { time: end, data: { reason: { kind: 'error' } } },
+    }) });
+    dur = c.getDuration();
+    text = c.getStamp();
+    check('G5 missing start -> no duration node, stamp intact', dur === null && !!text && text.includes('结束于'), { dur, text });
+
+    // zero span -> clamped to DSH's 1s minimum.
+    c.resetStamp();
+    c.component({ turn: makeTurn({
+      turn: 65, start: { time: end }, end: { time: end, data: { reason: { kind: 'error' } } },
+    }) });
+    dur = c.getDuration();
+    check('G6 zero span clamped to ，用时 1秒', !!dur && dur.includes('用时') && dur.includes('1秒'), dur);
+
+    // fold startTime fallback when the turn object has no start.
+    const okFetch = () => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, turns: [
+        { turn: 70, startTime: T - 65000, endTime: T, kind: 'error', models: [] },
+      ] }),
+    });
+    const c2 = loadClient(okFetch);
+    c2.component({
+      turn: makeTurn({ turn: 70, end: { time: T, data: { reason: { kind: 'error' } } } }),
+      sessionId: 'session-test',
+    });
+    await flush(); await flush(); await flush();
+    dur = c2.getDuration();
+    text = c2.getStamp();
+    check('G7 fold startTime fallback duration = ，用时 1分5秒', !!dur && dur.includes('用时') && dur.includes('1分5秒'), dur);
+    check('G7b fold fallback stamp keeps model', !!text && text.includes('结束于'), text);
   }
 
   console.log('\n' + (failures === 0 ? 'ALL PASS' : failures + ' FAILURE(S)'));
